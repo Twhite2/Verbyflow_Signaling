@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verbyflow Signaling Server Test Client</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #4a69bd;
+            border-bottom: 2px solid #dfe6e9;
+            padding-bottom: 10px;
+        }
+        .card {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input, button {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 16px;
+        }
+        button {
+            background-color: #4a69bd;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #3c58a8;
+        }
+        .connection-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .connected {
+            background-color: #2ecc71;
+        }
+        .disconnected {
+            background-color: #e74c3c;
+        }
+        .connecting {
+            background-color: #f1c40f;
+        }
+        #events {
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .event {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        .event-sent {
+            background-color: #2980b9;
+        }
+        .event-received {
+            background-color: #27ae60;
+        }
+        .event-error {
+            background-color: #c0392b;
+        }
+    </style>
+</head>
+<body>
+    <h1>Verbyflow Signaling Server Test Client</h1>
+    
+    <div class="card">
+        <div class="control-group">
+            <label for="server-url">Server URL:</label>
+            <input type="text" id="server-url" value="http://localhost:3000" style="width: 300px;">
+            <button id="connect-btn">Connect</button>
+            <span id="connection-status" class="connection-status disconnected"></span>
+            <span id="status-text">Disconnected</span>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h3>User Registration</h3>
+        <div class="control-group">
+            <label for="user-id">User ID:</label>
+            <input type="text" id="user-id" value="">
+            <button id="register-btn" disabled>Register User</button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h3>Meeting Management</h3>
+        <div class="control-group">
+            <label for="meeting-id">Meeting ID:</label>
+            <input type="text" id="meeting-id" value="">
+            <button id="create-btn" disabled>Create Meeting</button>
+            <button id="join-btn" disabled>Join Meeting</button>
+            <button id="end-btn" disabled>End Meeting</button>
+        </div>
+        <div class="control-group">
+            <label for="preferred-language">Preferred Language:</label>
+            <select id="preferred-language">
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="es">Spanish</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="zh">Chinese</option>
+            </select>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h3>WebRTC Signaling Simulation</h3>
+        <div class="control-group">
+            <label for="to-user-id">To User ID:</label>
+            <input type="text" id="to-user-id" value="">
+        </div>
+        <div class="control-group">
+            <button id="send-offer-btn" disabled>Send Offer</button>
+            <button id="send-answer-btn" disabled>Send Answer</button>
+            <button id="send-ice-btn" disabled>Send ICE Candidate</button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h3>Event Log</h3>
+        <div id="events"></div>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script>
+        // DOM elements
+        const serverUrlInput = document.getElementById('server-url');
+        const connectBtn = document.getElementById('connect-btn');
+        const connectionStatus = document.getElementById('connection-status');
+        const statusText = document.getElementById('status-text');
+        const userIdInput = document.getElementById('user-id');
+        const registerBtn = document.getElementById('register-btn');
+        const meetingIdInput = document.getElementById('meeting-id');
+        const createBtn = document.getElementById('create-btn');
+        const joinBtn = document.getElementById('join-btn');
+        const endBtn = document.getElementById('end-btn');
+        const languageSelect = document.getElementById('preferred-language');
+        const toUserIdInput = document.getElementById('to-user-id');
+        const sendOfferBtn = document.getElementById('send-offer-btn');
+        const sendAnswerBtn = document.getElementById('send-answer-btn');
+        const sendIceBtn = document.getElementById('send-ice-btn');
+        const eventsDiv = document.getElementById('events');
+        
+        let socket = null;
+        let isConnected = false;
+        let currentMeetingId = null;
+        
+        // Generate a random ID if none provided
+        if (!userIdInput.value) {
+            userIdInput.value = 'user_' + Math.random().toString(36).substr(2, 9);
+        }
+        
+        // Random meeting ID
+        meetingIdInput.value = Array(6).fill(0)
+            .map(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)])
+            .join('');
+        
+        // Connect to server
+        connectBtn.addEventListener('click', () => {
+            const serverUrl = serverUrlInput.value;
+            
+            if (isConnected && socket) {
+                // Disconnect if already connected
+                socket.disconnect();
+                return;
+            }
+            
+            try {
+                connectionStatus.className = 'connection-status connecting';
+                statusText.textContent = 'Connecting...';
+                
+                socket = io(serverUrl);
+                
+                // Connection events
+                socket.on('connect', () => {
+                    isConnected = true;
+                    connectionStatus.className = 'connection-status connected';
+                    statusText.textContent = 'Connected';
+                    connectBtn.textContent = 'Disconnect';
+                    
+                    // Enable buttons
+                    registerBtn.disabled = false;
+                    
+                    logEvent('Connected to server', 'system');
+                });
+                
+                socket.on('disconnect', () => {
+                    isConnected = false;
+                    connectionStatus.className = 'connection-status disconnected';
+                    statusText.textContent = 'Disconnected';
+                    connectBtn.textContent = 'Connect';
+                    
+                    // Disable buttons
+                    registerBtn.disabled = true;
+                    createBtn.disabled = true;
+                    joinBtn.disabled = true;
+                    endBtn.disabled = true;
+                    sendOfferBtn.disabled = true;
+                    sendAnswerBtn.disabled = true;
+                    sendIceBtn.disabled = true;
+                    
+                    logEvent('Disconnected from server', 'system');
+                });
+                
+                // Socket event handlers
+                socket.on('participant_joined', (data) => {
+                    logEvent('Participant joined: ' + JSON.stringify(data), 'received');
+                    toUserIdInput.value = data.userId;
+                    
+                    // Enable signaling buttons when a participant joins
+                    if (currentMeetingId && currentMeetingId === data.meetingId) {
+                        sendOfferBtn.disabled = false;
+                        sendAnswerBtn.disabled = false;
+                        sendIceBtn.disabled = false;
+                    }
+                });
+                
+                socket.on('participant_left', (data) => {
+                    logEvent('Participant left: ' + JSON.stringify(data), 'received');
+                    
+                    // Disable signaling buttons when the participant leaves
+                    if (currentMeetingId && currentMeetingId === data.meetingId) {
+                        sendOfferBtn.disabled = true;
+                        sendAnswerBtn.disabled = true;
+                        sendIceBtn.disabled = true;
+                    }
+                });
+                
+                socket.on('meeting_ended', (data) => {
+                    logEvent('Meeting ended: ' + JSON.stringify(data), 'received');
+                    currentMeetingId = null;
+                    
+                    // Disable meeting and signaling buttons
+                    endBtn.disabled = true;
+                    sendOfferBtn.disabled = true;
+                    sendAnswerBtn.disabled = true;
+                    sendIceBtn.disabled = true;
+                });
+                
+                socket.on('webrtc_offer', (data) => {
+                    logEvent('WebRTC offer received: ' + JSON.stringify(data), 'received');
+                    toUserIdInput.value = data.fromUserId;
+                    
+                    // Enable answer button
+                    sendAnswerBtn.disabled = false;
+                });
+                
+                socket.on('webrtc_answer', (data) => {
+                    logEvent('WebRTC answer received: ' + JSON.stringify(data), 'received');
+                });
+                
+                socket.on('ice_candidate', (data) => {
+                    logEvent('ICE candidate received: ' + JSON.stringify(data), 'received');
+                });
+                
+                socket.on('connect_error', (error) => {
+                    logEvent('Connection error: ' + error.message, 'error');
+                });
+                
+            } catch (error) {
+                logEvent('Error connecting to server: ' + error.message, 'error');
+            }
+        });
+        
+        // Register user
+        registerBtn.addEventListener('click', () => {
+            const userId = userIdInput.value;
+            
+            if (!userId) {
+                logEvent('User ID is required', 'error');
+                return;
+            }
+            
+            socket.emit('register_user', { userId }, (response) => {
+                if (response.success) {
+                    logEvent('User registered successfully: ' + userId, 'sent');
+                    createBtn.disabled = false;
+                    joinBtn.disabled = false;
+                } else {
+                    logEvent('Failed to register user: ' + (response.error || 'Unknown error'), 'error');
+                }
+            });
+        });
+        
+        // Create meeting
+        createBtn.addEventListener('click', () => {
+            const meetingId = meetingIdInput.value;
+            const language = languageSelect.value;
+            
+            if (!meetingId) {
+                logEvent('Meeting ID is required', 'error');
+                return;
+            }
+            
+            const user = {
+                id: userIdInput.value,
+                preferredLanguage: language
+            };
+            
+            socket.emit('create_meeting', { meetingId, user }, (response) => {
+                if (response.success) {
+                    logEvent('Meeting created: ' + meetingId, 'sent');
+                    currentMeetingId = meetingId;
+                    endBtn.disabled = false;
+                } else {
+                    logEvent('Failed to create meeting: ' + (response.error || 'Unknown error'), 'error');
+                }
+            });
+        });
+        
+        // Join meeting
+        joinBtn.addEventListener('click', () => {
+            const meetingId = meetingIdInput.value;
+            const language = languageSelect.value;
+            
+            if (!meetingId) {
+                logEvent('Meeting ID is required', 'error');
+                return;
+            }
+            
+            const user = {
+                id: userIdInput.value,
+                preferredLanguage: language
+            };
+            
+            socket.emit('join_meeting', { meetingId, user }, (response) => {
+                if (response.success) {
+                    logEvent('Joined meeting: ' + meetingId + ', host: ' + response.hostId, 'sent');
+                    currentMeetingId = meetingId;
+                    endBtn.disabled = false;
+                    toUserIdInput.value = response.hostId;
+                    
+                    // Enable signaling buttons
+                    sendOfferBtn.disabled = false;
+                    sendAnswerBtn.disabled = false;
+                    sendIceBtn.disabled = false;
+                } else {
+                    logEvent('Failed to join meeting: ' + (response.error || 'Unknown error'), 'error');
+                }
+            });
+        });
+        
+        // End meeting
+        endBtn.addEventListener('click', () => {
+            const meetingId = currentMeetingId || meetingIdInput.value;
+            
+            if (!meetingId) {
+                logEvent('No active meeting', 'error');
+                return;
+            }
+            
+            socket.emit('end_meeting', { meetingId }, (response) => {
+                if (response.success) {
+                    logEvent('Meeting ended: ' + meetingId, 'sent');
+                    currentMeetingId = null;
+                    endBtn.disabled = true;
+                    sendOfferBtn.disabled = true;
+                    sendAnswerBtn.disabled = true;
+                    sendIceBtn.disabled = true;
+                } else {
+                    logEvent('Failed to end meeting: ' + (response.error || 'Unknown error'), 'error');
+                }
+            });
+        });
+        
+        // Send WebRTC offer
+        sendOfferBtn.addEventListener('click', () => {
+            const toUserId = toUserIdInput.value;
+            const meetingId = currentMeetingId || meetingIdInput.value;
+            
+            if (!toUserId || !meetingId) {
+                logEvent('Meeting ID and To User ID are required', 'error');
+                return;
+            }
+            
+            // Create a mock SDP offer
+            const offer = {
+                type: 'offer',
+                sdp: 'v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic: WMS\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=ice-ufrag:test\r\na=ice-pwd:test123\r\na=ice-options:trickle\r\na=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99\r\na=setup:actpass\r\na=mid:0\r\na=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=sendrecv\r\na=rtcp-mux\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n'
+            };
+            
+            socket.emit('webrtc_offer', {
+                meetingId,
+                toUserId,
+                offer
+            });
+            
+            logEvent('Sent WebRTC offer to: ' + toUserId, 'sent');
+        });
+        
+        // Send WebRTC answer
+        sendAnswerBtn.addEventListener('click', () => {
+            const toUserId = toUserIdInput.value;
+            const meetingId = currentMeetingId || meetingIdInput.value;
+            
+            if (!toUserId || !meetingId) {
+                logEvent('Meeting ID and To User ID are required', 'error');
+                return;
+            }
+            
+            // Create a mock SDP answer
+            const answer = {
+                type: 'answer',
+                sdp: 'v=0\r\no=- 987654321 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic: WMS\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=ice-ufrag:resp\r\na=ice-pwd:resp123\r\na=ice-options:trickle\r\na=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99\r\na=setup:active\r\na=mid:0\r\na=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=sendrecv\r\na=rtcp-mux\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n'
+            };
+            
+            socket.emit('webrtc_answer', {
+                meetingId,
+                toUserId,
+                answer
+            });
+            
+            logEvent('Sent WebRTC answer to: ' + toUserId, 'sent');
+        });
+        
+        // Send ICE candidate
+        sendIceBtn.addEventListener('click', () => {
+            const toUserId = toUserIdInput.value;
+            const meetingId = currentMeetingId || meetingIdInput.value;
+            
+            if (!toUserId || !meetingId) {
+                logEvent('Meeting ID and To User ID are required', 'error');
+                return;
+            }
+            
+            // Create a mock ICE candidate
+            const candidate = {
+                sdpMid: '0',
+                sdpMLineIndex: 0,
+                candidate: 'candidate:1 1 UDP 2122194687 192.168.1.100 55555 typ host'
+            };
+            
+            socket.emit('ice_candidate', {
+                meetingId,
+                toUserId,
+                candidate
+            });
+            
+            logEvent('Sent ICE candidate to: ' + toUserId, 'sent');
+        });
+        
+        // Helper functions
+        function logEvent(message, type) {
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'event event-' + (type || 'system');
+            
+            const timestamp = new Date().toISOString().substr(11, 8);
+            eventDiv.textContent = `[${timestamp}] ${message}`;
+            
+            eventsDiv.appendChild(eventDiv);
+            eventsDiv.scrollTop = eventsDiv.scrollHeight;
+        }
+        
+        // Initialize the page
+        logEvent('Verbyflow Signaling Server Test Client', 'system');
+        logEvent('Connect to a server to get started', 'system');
+    </script>
+</body>
+</html>
