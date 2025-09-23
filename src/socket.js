@@ -18,7 +18,10 @@ function setupSocketHandlers(io) {
         const { userId } = data;
         
         if (!userId) {
-          return callback({ success: false, error: 'User ID is required' });
+          if (typeof callback === 'function') {
+            return callback({ success: false, error: 'User ID is required' });
+          }
+          return;
         }
 
         // Add user to connections map
@@ -26,10 +29,14 @@ function setupSocketHandlers(io) {
         socket.userId = userId;
 
         logger.info(`User registered: ${userId} (Socket ID: ${socket.id})`);
-        callback({ success: true });
+        if (typeof callback === 'function') {
+          callback({ success: true });
+        }
       } catch (error) {
         logger.error(`Error in register_user: ${error.message}`);
-        callback({ success: false, error: error.message });
+        if (typeof callback === 'function') {
+          callback({ success: false, error: error.message });
+        }
       }
     });
 
