@@ -40,6 +40,25 @@ function setupSocketHandlers(io) {
       }
     });
 
+    // Verify if a meeting exists (used before joining)
+    socket.on('verify_meeting', (meetingId, callback) => {
+      try {
+        logger.info(`Verifying meeting: ${meetingId}`);
+        
+        const exists = activeSessions.has(meetingId);
+        logger.info(`Meeting ${meetingId} verification result: ${exists ? 'exists' : 'not found'}`);
+        
+        if (typeof callback === 'function') {
+          callback(exists);
+        }
+      } catch (error) {
+        logger.error(`Error in verify_meeting: ${error.message}`);
+        if (typeof callback === 'function') {
+          callback(false);
+        }
+      }
+    });
+
     // Create a new meeting session
     socket.on('create_meeting', (data, callback) => {
       try {
@@ -61,6 +80,7 @@ function setupSocketHandlers(io) {
           participants: [user.id],
           status: 'waiting',
           sourceLanguage: user.preferredLanguage,
+          initiatorLanguage: user.preferredLanguage, // Add for Android app compatibility
           createdAt: Date.now()
         };
 
@@ -71,7 +91,11 @@ function setupSocketHandlers(io) {
         socket.join(meetingId);
         
         logger.info(`Meeting created: ${meetingId} by user ${user.id}`);
-        callback({ success: true, isHost: true });
+        callback({ 
+          success: true, 
+          isHost: true,
+          initiatorLanguage: user.preferredLanguage // Return initiator language
+        });
       } catch (error) {
         logger.error(`Error in create_meeting: ${error.message}`);
         callback({ success: false, error: error.message });
@@ -89,6 +113,7 @@ function setupSocketHandlers(io) {
 
         // Check if the meeting exists
         if (!activeSessions.has(meetingId)) {
+          logger.warn(`Join attempt failed - Meeting ${meetingId} not found`);
           return callback({ success: false, error: 'Meeting not found' });
         }
 
@@ -100,6 +125,7 @@ function setupSocketHandlers(io) {
         }
         
         session.targetLanguage = user.preferredLanguage;
+        session.receiverLanguage = user.preferredLanguage; // Add for Android app compatibility
         session.status = 'connecting';
 
         // Update session
@@ -113,7 +139,7 @@ function setupSocketHandlers(io) {
         // Notify the host
         const hostSocketId = userConnections.get(session.host);
         if (hostSocketId) {
-          socket.to(hostSocketId).emit('participant_joined', { 
+          io.to(hostSocketId).emit('participant_joined', { 
             meetingId, 
             userId: user.id,
             preferredLanguage: user.preferredLanguage
@@ -124,7 +150,8 @@ function setupSocketHandlers(io) {
           success: true, 
           isHost: false,
           hostId: session.host,
-          sourceLanguage: session.sourceLanguage
+          initiatorLanguage: session.initiatorLanguage || session.sourceLanguage,
+          receiverLanguage: user.preferredLanguage
         });
       } catch (error) {
         logger.error(`Error in join_meeting: ${error.message}`);
@@ -236,6 +263,41 @@ function setupSocketHandlers(io) {
         logger.debug(`ICE candidate sent to ${toUserId} in meeting ${meetingId}`);
       } catch (error) {
         logger.error(`Error in ice_candidate: ${error.message}`);
+      }
+    });
+
+    // Handle connection status updates
+    socket.on('connection_status', (data) => {
+      try {
+        const { meetingId, fromUserId, status } = data;
+
+        if (!meetingId || !status) {
+          logger.error('Invalid connection_status data');
+          return;
+        }
+
+        logger.debug(`Connection status from ${fromUserId || socket.userId}: ${status} in meeting ${meetingId}`);
+
+        // Broadcast status to all other participants in the meeting
+        socket.to(meetingId).emit('connection_status', {
+          meetingId,
+          fromUserId: fromUserId || socket.userId,
+          status
+        });
+      } catch (error) {
+        logger.error(`Error in connection_status: ${error.message}`);
+      }
+    });
+
+    // Ping-pong for connection testing
+    socket.on('ping', (callback) => {
+      try {
+        logger.debug(`Ping received from ${socket.id}`);
+        if (typeof callback === 'function') {
+          callback('pong');
+        }
+      } catch (error) {
+        logger.error(`Error in ping: ${error.message}`);
       }
     });
 
